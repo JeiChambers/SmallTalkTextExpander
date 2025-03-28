@@ -1,5 +1,4 @@
 import tkinter as tk
-from tkimg import load_tkimg
 from tkinter import ttk, messagebox, scrolledtext
 import json
 import os
@@ -34,7 +33,7 @@ class TextExpander:
     def setup_ui_style(self):
         # Configure the style
         style = ttk.Style()
-        style.theme_use("calm")  # Look through themes to choose a cool one.
+        style.theme_use("clam")  # Look through themes to choose a cool one.
 
         # Configure colors and styles
         style.configure("TFrame",background="F5F5F5")
@@ -219,23 +218,29 @@ class TextExpander:
         buffer = ""
         max_buffer_size = 50 # Maximum number of recent characters to track
 
-        while self.listener_active:
-            time.sleep(0.01) # Reduce CPU usage
+        def callback(event):
+            nonlocal buffer
 
-            # Get key events
-            events = keyboard.get_typed_strings()
-            if not events:
-                continue
+            # For printable characters, add to buffer
+            if hasattr(event, 'name') and len(event.name) == 1:
+                buffer += event.name
+            elif event.name == 'space':
+                buffer += ' '
+            elif event.name in ['enter', 'tab']:
+                buffer += ' '  # Add a space as a separator for these keys
 
-            # Update the buffer with the latest typed characters
-            for s in events:
-                buffer += s
-                if len(buffer) > max_buffer_size:
-                    buffer = buffer[-max_buffer_size:]
+            # Keep buffer at max size
+            if len(buffer) > max_buffer_size:
+                buffer = buffer[:max_buffer_size]
 
             # Check if any macro trigger is in the buffer
             for trigger in self.macros:
-                if buffer.endswith(trigger):
+                if trigger and buffer.endswith(trigger):
+                    # Release all keys to avoid interference
+                    keyboard.release('shift')
+                    keyboard.release('ctrl')
+                    keyboard.release('alt')
+
                     # Delete the trigger text
                     for _ in range(len(trigger)):
                         keyboard.send('backspace')
@@ -244,13 +249,31 @@ class TextExpander:
                     keyboard.write(self.macros[trigger])
 
                     # Update the buffer
-                    buffer = buffer[:-len(trigger)]
+                    buffer = ""
 
-                    self.status_var.set(f"Expanded: {trigger}")
+                    # Update status
+                    # We can't directly update the UI from another thread
+                    # So we use after() to schedule the update on the main thread
+                    self.root.after(0, lambda: self.status_var.set(f"Expanded: {trigger}"))
+
+                    # Break to avoid checking other triggers
+                    break
+
+        # Hook the callback to all key presses
+        keyboard.on_release(callback=callback)
+
+        # Keep the thread alive until listener_active is False
+        while self.listener_active:
+            time.sleep(0.1)  # Sleep to reduce CPU
+
+        # Unhook the callback when shutting down
+        keyboard.unhook_all()
+
 
     def on_closing(self):
         """Handle window closing"""
         self.listener_active = False
+        self.listener_thread.join(1.0) # Wait up to 1 second for thread to finish
         self.save_macros()
         self.root.destroy()
 
